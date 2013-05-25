@@ -44,4 +44,25 @@ func TestDeleted(t *testing.T) {
 	}
 }
 
+func TestReserve(t *testing.T) {
+	beaner, err := New("127.0.0.1", 11300)
+	if err != nil {
+		t.Fatalf("connection is not established")
+	}
+	jobId, err := beaner.Put([]byte("test"), 0, 0, 120)
+	if err != nil {
+		t.Fatalf("error: %s", err.Error())
+	}
+	if jobId == 0 {
+		t.Fatalf("job id should not be 0")
+	}
+	_, jobData, err := beaner.Reserve()
+	if err != nil {
+		t.Fatalf("error: %s", err.Error())
+	}
+	if string(jobData) != "test" {
+		t.Fatalf("wrong test data")
+	}
+}
+
 
