@@ -22,6 +22,10 @@ func New(host string, port int) (*GoBeaner, error) {
 	return &GoBeaner{conn, bufio.NewReader(conn)}, nil
 }
 
+func (this *GoBeaner) Close(){
+	this.conn.Close()
+}
+
 func (this *GoBeaner) executeCommand(command beanstaldCommand) error {
 	var e error
 	secondFrame := command.ReqSecondFrame()
