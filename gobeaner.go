@@ -1,10 +1,3 @@
-/**
- * Created with IntelliJ IDEA.
- * User: fuqiang
- * Date: 13-5-25
- * Time: 下午3:38
- * To change this template use File | Settings | File Templates.
- */
 package gobeaner
 
 import (
@@ -29,27 +22,14 @@ func New(host string, port int) (*GoBeaner, error) {
 	return &GoBeaner{conn, bufio.NewReader(conn)}, nil
 }
 
-func (this *GoBeaner) Put(jobData []byte, pri, delay, ttr int) (jobId int, err error) {
-	e := this.send("put %d %d %d %d\r\n%s\r\n", pri, delay, ttr, len(jobData), jobData)
-	if e != nil {
-		err = ConnError{e}
-		return
+func (this *GoBeaner) executeCommand(command beanstaldCommand) error {
+	var e error
+	secondFrame := command.ReqSecondFrame()
+	if secondFrame != nil {
+		e = this.send("%s%s\r\n", command.ReqFirstFrame(), secondFrame)
+	} else {
+		e = this.send("%s", command.ReqFirstFrame())
 	}
-	firstFrame, e := this.read1stFrame()
-	if e != nil {
-		err = ConnError{e}
-		return
-	}
-	_, e = fmt.Sscanf(firstFrame, "INSERTED %d\r\n", &jobId)
-	if e != nil {
-		err = checkError(strings.TrimSuffix(firstFrame, "\r\n"))
-		return
-	}
-	return
-}
-
-func (this *GoBeaner) Delete(jobId int) error {
-	e := this.send("delete %d\r\n", jobId)
 	if e != nil {
 		return ConnError{e}
 	}
@@ -57,55 +37,49 @@ func (this *GoBeaner) Delete(jobId int) error {
 	if e != nil {
 		return ConnError{e}
 	}
-	_, e = fmt.Sscanf(firstFrame, "DELETED\r\n")
+	secondFrameLen, e := command.ParseRespFirstFrame(firstFrame)
 	if e != nil {
 		return checkError(strings.TrimSuffix(firstFrame, "\r\n"))
 	}
+	if secondFrameLen > 0 {
+		secondFrame, err := this.read2ndFrame(secondFrameLen)
+		if err != nil {
+			return ConnError{err}
+		}
+		command.ParseRespSecondFrame(secondFrame)
+	}
 	return nil
+}
+
+func (this *GoBeaner) Put(jobData []byte, pri, delay, ttr int) (jobId uint64, err error) {
+	command := newPutCommand(pri, delay, ttr, jobData)
+	err = this.executeCommand(command)
+	jobId = command.JobId
+	return
+}
+
+func (this *GoBeaner) Delete(jobId uint64) error {
+	return this.executeCommand(newDeleteCommand(jobId))
+}
+
+func (this *GoBeaner) Release(jobId uint64, pri, delay int) error {
+	return this.executeCommand(newReleaseCommand(jobId, pri, delay))
 }
 
 func (this *GoBeaner) Use(tube string) error {
-	e := this.send("use %s\r\n", tube)
-	if e != nil {
-		return ConnError{e}
-	}
-	firstFrame, e := this.read1stFrame()
-	if e != nil {
-		return ConnError{e}
-	}
-	var tubeName string
-	_, e = fmt.Sscanf(firstFrame, "USING %s\r\n", &tubeName)
-	if e != nil {
-		return checkError(strings.TrimSuffix(firstFrame, "\r\n"))
-	}
-	return nil
+	return this.executeCommand(newUseCommand(tube))
 }
 
-func (this *GoBeaner) Reserve() (jobId int, jobData []byte, err error) {
-	e := this.send("reserve\r\n")
-	if e != nil {
-		err = ConnError{e}
-		return
-	}
-	firstFrame, e := this.read1stFrame()
-	if e != nil {
-		err = ConnError{e}
-		return
-	}
-	var jobLen int
-	_, e = fmt.Sscanf(firstFrame, "RESERVED %d %d\r\n", &jobId, &jobLen)
-	if e != nil {
-		err = checkError(strings.TrimSuffix(firstFrame, "\r\n"))
-		return
-	}
-	if jobLen > 0 {
-		jobData, err = this.read2ndFrame(jobLen)
-		if err != nil {
-			err = ConnError{err}
-			return
-		}
-	}
+func (this *GoBeaner) ReserveWithTimeOut(timeout int) (jobId uint64, jobData []byte, err error) {
+	command := newReserveCommand(timeout)
+	err = this.executeCommand(command)
+	jobId = command.jobId
+	jobData = command.RespSecondFrame
 	return
+}
+
+func (this *GoBeaner) Reserve() (jobId uint64, jobData []byte, err error) {
+	return this.ReserveWithTimeOut(0)
 }
 
 func (this *GoBeaner) send(format string, args... interface {}) error {
